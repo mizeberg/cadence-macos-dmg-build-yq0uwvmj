@@ -1,0 +1,61 @@
+name: Build macOS testing DMGs
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build ${{ matrix.arch }} DMG
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x86_64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.5'
+          channel: stable
+          cache: true
+
+      - name: Analyze and test
+        run: |
+          flutter pub get
+          flutter analyze
+          flutter test --reporter expanded
+
+      - name: Build unsigned DMG
+        run: ./tool/build_macos_dmg.sh
+
+      - name: Verify DMG and architecture
+        shell: bash
+        run: |
+          product_dir="build/macos/Build/Products/Release"
+          app_path="$(find "$product_dir" -maxdepth 1 -type d -name '*.app' -print -quit)"
+          executable="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$app_path/Contents/Info.plist")"
+          echo "Built application architecture:"
+          lipo -archs "$app_path/Contents/MacOS/$executable"
+          output="$RUNNER_TEMP/Cadence-${{ matrix.arch }}.dmg"
+          cp "$product_dir/Cadence.dmg" "$output"
+          hdiutil verify "$output"
+
+      - name: Upload DMG for direct download
+        uses: actions/upload-artifact@v4
+        with:
+          name: Cadence-macOS-${{ matrix.arch }}
+          path: ${{ runner.temp }}/Cadence-${{ matrix.arch }}.dmg
+          if-no-files-found: error
+          retention-days: 1
